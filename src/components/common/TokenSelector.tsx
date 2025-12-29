@@ -7,14 +7,16 @@ interface TokenSelectorProps {
   selectedToken?: Token;
   onSelect: (token: Token) => void;
   excludeToken?: Token;
+  tokens?: Token[];
   label?: string;
 }
 
-export default function TokenSelector({ selectedToken, onSelect, excludeToken, label }: TokenSelectorProps) {
+export default function TokenSelector({ selectedToken, onSelect, excludeToken, tokens, label }: TokenSelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [search, setSearch] = useState('');
 
-  const filteredTokens = TOKENS.filter((token) => {
+  const tokenList = tokens || TOKENS;
+  const filteredTokens = tokenList.filter((token) => {
     if (excludeToken && token.address === excludeToken.address) return false;
     if (!search) return true;
     return (

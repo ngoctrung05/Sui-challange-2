@@ -5,6 +5,7 @@ import { SuiClientProvider, WalletProvider } from '@mysten/dapp-kit';
 import { getFullnodeUrl } from '@mysten/sui/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
+import { ToastProvider } from './contexts/ToastContext';
 import './index.css';
 import '@mysten/dapp-kit/dist/index.css';
 
@@ -20,7 +21,9 @@ createRoot(document.getElementById('root')!).render(
       <SuiClientProvider networks={networks} defaultNetwork="testnet">
         <WalletProvider autoConnect>
           <BrowserRouter>
-            <App />
+            <ToastProvider>
+              <App />
+            </ToastProvider>
           </BrowserRouter>
         </WalletProvider>
       </SuiClientProvider>

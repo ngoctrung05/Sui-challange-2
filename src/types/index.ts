@@ -6,6 +6,7 @@ export interface Token {
   logoUrl?: string;
   faucetEnabled?: boolean;
   faucetAmount?: string;
+  faucetObjectId?: string;
 }
 
 export interface FaucetParams {

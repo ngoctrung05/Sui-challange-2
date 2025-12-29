@@ -1,32 +1,11 @@
 import { useCurrentAccount } from '@mysten/dapp-kit';
-import type { Position } from '../../types';
 import { Card, Button } from '../common';
 import PositionCard from './PositionCard';
-import { MOCK_POOLS } from '../../constants';
-
-const MOCK_POSITIONS: Position[] = [
-  {
-    id: '0xpos1',
-    pool: MOCK_POOLS[0],
-    liquidity: '1000000000',
-    tokenAAmount: '500000000000',
-    tokenBAmount: '2000000000',
-    sharePercent: 0.05,
-    valueUsd: '4000',
-  },
-  {
-    id: '0xpos2',
-    pool: MOCK_POOLS[1],
-    liquidity: '500000000',
-    tokenAAmount: '250000000000',
-    tokenBAmount: '1000000000',
-    sharePercent: 0.025,
-    valueUsd: '2000',
-  },
-];
+import { usePositions } from '../../hooks';
 
 export default function PositionsList() {
   const account = useCurrentAccount();
+  const { data: positions, isLoading, error } = usePositions();
 
   if (!account) {
     return (
@@ -50,7 +29,39 @@ export default function PositionsList() {
     );
   }
 
-  if (MOCK_POSITIONS.length === 0) {
+  if (isLoading) {
+    return (
+      <Card className="text-center py-12">
+        <div className="w-8 h-8 mx-auto mb-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+        <h3 className="text-lg font-semibold text-white mb-2">Loading Positions</h3>
+        <p className="text-[#a0a0a0]">Fetching your liquidity positions...</p>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card className="text-center py-12">
+        <svg
+          className="w-16 h-16 mx-auto mb-4 text-red-500"
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            strokeWidth={1.5}
+            d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+          />
+        </svg>
+        <h3 className="text-lg font-semibold text-white mb-2">Error Loading Positions</h3>
+        <p className="text-[#a0a0a0] mb-4">Failed to load your positions. Please try again.</p>
+      </Card>
+    );
+  }
+
+  if (!positions || positions.length === 0) {
     return (
       <Card className="text-center py-12">
         <svg
@@ -77,10 +88,10 @@ export default function PositionsList() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold text-white">Your Positions</h2>
-        <span className="text-[#a0a0a0]">{MOCK_POSITIONS.length} positions</span>
+        <span className="text-[#a0a0a0]">{positions.length} position{positions.length !== 1 ? 's' : ''}</span>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
-        {MOCK_POSITIONS.map((position) => (
+        {positions.map((position) => (
           <PositionCard key={position.id} position={position} />
         ))}
       </div>

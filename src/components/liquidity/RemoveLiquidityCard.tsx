@@ -1,42 +1,28 @@
 import { useState, useMemo } from 'react';
-import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from '@mysten/dapp-kit';
+import { Transaction } from '@mysten/sui/transactions';
 import type { Position } from '../../types';
 import { Card, Button, Modal } from '../common';
 import { RemoveLiquidityConfirmModal } from './LiquidityConfirmModal';
-import { removeLiquidity } from '../../services/contract';
-import { MOCK_POOLS } from '../../constants';
-
-const MOCK_POSITIONS: Position[] = [
-  {
-    id: '0xpos1',
-    pool: MOCK_POOLS[0],
-    liquidity: '1000000000',
-    tokenAAmount: '500000000000',
-    tokenBAmount: '2000000000',
-    sharePercent: 0.05,
-    valueUsd: '4000',
-  },
-  {
-    id: '0xpos2',
-    pool: MOCK_POOLS[1],
-    liquidity: '500000000',
-    tokenAAmount: '250000000000',
-    tokenBAmount: '1000000000',
-    sharePercent: 0.025,
-    valueUsd: '2000',
-  },
-];
+import { DEX_PACKAGE_ID } from '../../constants';
+import { useToast } from '../../contexts/ToastContext';
+import { usePositions } from '../../hooks';
 
 const PERCENTAGE_OPTIONS = [25, 50, 75, 100];
 
 export default function RemoveLiquidityCard() {
   const account = useCurrentAccount();
+  const client = useSuiClient();
+  const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
+  const { showTxSuccess, showError } = useToast();
+  const { data: positions, isLoading: positionsLoading } = usePositions();
 
   const [selectedPosition, setSelectedPosition] = useState<Position | undefined>();
   const [percentage, setPercentage] = useState(0);
   const [showPositionModal, setShowPositionModal] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const tokenAReceive = useMemo(() => {
     if (!selectedPosition) return '0';
@@ -48,24 +34,96 @@ export default function RemoveLiquidityCard() {
     return ((parseFloat(selectedPosition.tokenBAmount) * percentage) / 100 / Math.pow(10, selectedPosition.pool.tokenB.decimals)).toFixed(6);
   }, [selectedPosition, percentage]);
 
+  // Validate Sui object ID format
+  const isValidPoolId = (id: string): boolean => {
+    return typeof id === 'string' && /^0x[a-fA-F0-9]{64}$/.test(id);
+  };
+
   const handleRemoveLiquidity = async () => {
-    if (!selectedPosition) return;
+    if (!selectedPosition || !account) return;
+
+    // Validate pool ID before proceeding
+    if (!isValidPoolId(selectedPosition.pool.id)) {
+      const errMsg = `Invalid pool ID: ${selectedPosition.pool.id}`;
+      console.error(errMsg);
+      setError('Invalid pool in position. Please select a valid position.');
+      showError('Remove Liquidity Failed', 'Invalid pool ID');
+      return;
+    }
 
     setIsLoading(true);
+    setError(null);
+
     try {
-      await removeLiquidity({
-        position: selectedPosition,
-        percentage,
-        minTokenAAmount: '0',
-        minTokenBAmount: '0',
-        slippage: 0.5,
+      const tx = new Transaction();
+
+      // Calculate LP amount to burn based on percentage
+      const lpAmountToBurn = BigInt(
+        Math.floor((parseFloat(selectedPosition.liquidity) * percentage) / 100)
+      );
+
+      // Get LP token type for this pool
+      const lpTokenType = `${DEX_PACKAGE_ID}::lp_token::LP<${selectedPosition.pool.tokenA.address}, ${selectedPosition.pool.tokenB.address}>`;
+
+      // Get user's LP tokens
+      const lpCoins = await client.getCoins({
+        owner: account.address,
+        coinType: lpTokenType,
       });
+
+      if (lpCoins.data.length === 0) {
+        throw new Error('No LP tokens found for this pool');
+      }
+
+      // Prepare LP coin for burning
+      let lpCoin;
+      if (lpCoins.data.length > 1) {
+        const primaryCoin = tx.object(lpCoins.data[0].coinObjectId);
+        tx.mergeCoins(primaryCoin, lpCoins.data.slice(1).map((c) => tx.object(c.coinObjectId)));
+        [lpCoin] = tx.splitCoins(primaryCoin, [tx.pure.u64(lpAmountToBurn)]);
+      } else if (BigInt(lpCoins.data[0].balance) > lpAmountToBurn) {
+        [lpCoin] = tx.splitCoins(tx.object(lpCoins.data[0].coinObjectId), [tx.pure.u64(lpAmountToBurn)]);
+      } else {
+        lpCoin = tx.object(lpCoins.data[0].coinObjectId);
+      }
+
+      // Remove liquidity
+      const [coinA, coinB] = tx.moveCall({
+        target: `${DEX_PACKAGE_ID}::liquidity::remove_liquidity`,
+        typeArguments: [
+          selectedPosition.pool.tokenA.address,
+          selectedPosition.pool.tokenB.address,
+        ],
+        arguments: [
+          tx.object(selectedPosition.pool.id),
+          lpCoin,
+        ],
+      });
+
+      // Transfer received coins to sender
+      tx.transferObjects([coinA, coinB], account.address);
+
+      const result = await signAndExecute({
+        transaction: tx,
+      });
+
+      console.log('Remove liquidity result:', result);
+
+      // Show toast with SuiVision link
+      showTxSuccess(
+        'Liquidity Removed',
+        result.digest,
+        `Removed ${percentage}% from ${selectedPosition.pool.tokenA.symbol}/${selectedPosition.pool.tokenB.symbol} pool`
+      );
+
       setPercentage(0);
       setSelectedPosition(undefined);
       setShowConfirm(false);
-    } catch (error) {
-      console.error('Remove liquidity failed:', error);
-      alert('Remove liquidity failed. Please check console for details.');
+    } catch (err) {
+      console.error('Remove liquidity failed:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      setError(`Failed to remove liquidity: ${errorMessage}`);
+      showError('Remove Liquidity Failed', errorMessage);
     } finally {
       setIsLoading(false);
     }
@@ -84,6 +142,12 @@ export default function RemoveLiquidityCard() {
     <>
       <Card className="max-w-md mx-auto">
         <h2 className="text-xl font-semibold text-white mb-4">Remove Liquidity</h2>
+
+        {error && (
+          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+            <p className="text-sm text-red-400">{error}</p>
+          </div>
+        )}
 
         <div className="space-y-4">
           <div>
@@ -199,10 +263,15 @@ export default function RemoveLiquidityCard() {
         title="Select Position"
       >
         <div className="space-y-2">
-          {MOCK_POSITIONS.length === 0 ? (
+          {positionsLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="w-6 h-6 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin" />
+              <span className="ml-2 text-[#a0a0a0]">Loading positions...</span>
+            </div>
+          ) : !positions || positions.length === 0 ? (
             <p className="text-center text-[#a0a0a0] py-4">No positions found</p>
           ) : (
-            MOCK_POSITIONS.map((position) => (
+            positions.map((position) => (
               <button
                 key={position.id}
                 onClick={() => {

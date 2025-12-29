@@ -1,161 +1,253 @@
+import { Transaction } from '@mysten/sui/transactions';
 import type {
   SwapParams,
   AddLiquidityParams,
   RemoveLiquidityParams,
-  TransactionResult,
   SwapQuote,
   Pool,
   Token,
   FaucetParams,
 } from '../types';
+import { DEX_PACKAGE_ID, CLOCK_ID, DEFAULT_FEE_BPS, FEE_DENOMINATOR } from '../constants/config';
 
 /**
- * Execute a token swap
- * TODO: Implement actual contract call using Sui SDK
- *
- * Example implementation:
- * ```typescript
- * const tx = new Transaction();
- * tx.moveCall({
- *   target: `${PACKAGE_ID}::router::swap`,
- *   arguments: [
- *     tx.object(poolId),
- *     tx.pure.u64(inputAmount),
- *     tx.pure.u64(minOutputAmount),
- *   ],
- * });
- * const result = await signAndExecuteTransaction({ transaction: tx });
- * ```
+ * Build a faucet request transaction
+ * Calls: faucet::request_tokens_entry<T>(faucet, clock, ctx)
  */
-export const swap = async (_params: SwapParams): Promise<TransactionResult> => {
-  // TODO: Implement actual contract call
-  console.log('Swap called with params:', _params);
-  throw new Error('Swap not implemented - connect to your smart contract');
+export const buildFaucetTransaction = (params: FaucetParams): Transaction => {
+  const tx = new Transaction();
+
+  if (!params.token.faucetObjectId) {
+    throw new Error(`Faucet not available for ${params.token.symbol}`);
+  }
+
+  tx.moveCall({
+    target: `${DEX_PACKAGE_ID}::faucet::request_tokens_entry`,
+    typeArguments: [params.token.address],
+    arguments: [
+      tx.object(params.token.faucetObjectId),
+      tx.object(CLOCK_ID),
+    ],
+  });
+
+  return tx;
 };
 
 /**
- * Add liquidity to a pool
- * TODO: Implement actual contract call using Sui SDK
- *
- * Example implementation:
- * ```typescript
- * const tx = new Transaction();
- * tx.moveCall({
- *   target: `${PACKAGE_ID}::router::add_liquidity`,
- *   arguments: [
- *     tx.object(poolId),
- *     tx.pure.u64(tokenAAmount),
- *     tx.pure.u64(tokenBAmount),
- *     tx.pure.u64(minLpTokens),
- *   ],
- * });
- * const result = await signAndExecuteTransaction({ transaction: tx });
- * ```
+ * Build a swap transaction
+ * Calls: swap::swap_x_to_y or swap::swap_y_to_x
  */
-export const addLiquidity = async (_params: AddLiquidityParams): Promise<TransactionResult> => {
-  // TODO: Implement actual contract call
-  console.log('Add liquidity called with params:', _params);
-  throw new Error('Add liquidity not implemented - connect to your smart contract');
+export const buildSwapTransaction = (
+  params: SwapParams,
+  pool: Pool,
+  coinObjectId: string
+): Transaction => {
+  const tx = new Transaction();
+
+  // Determine swap direction based on input token
+  const isXToY = pool.tokenA.address === params.inputToken.address;
+  const swapFunction = isXToY ? 'swap_x_to_y' : 'swap_y_to_x';
+
+  // Type arguments in correct order (pool is always Pool<X, Y>)
+  const typeArgs = [pool.tokenA.address, pool.tokenB.address];
+
+  // Calculate minimum output with slippage
+  const minOutput = Math.floor(
+    parseFloat(params.minOutputAmount) * Math.pow(10, params.outputToken.decimals)
+  );
+
+  tx.moveCall({
+    target: `${DEX_PACKAGE_ID}::swap::${swapFunction}`,
+    typeArguments: typeArgs,
+    arguments: [
+      tx.object(pool.id),
+      tx.object(coinObjectId),
+      tx.pure.u64(minOutput),
+    ],
+  });
+
+  return tx;
 };
 
 /**
- * Remove liquidity from a pool
- * TODO: Implement actual contract call using Sui SDK
- *
- * Example implementation:
- * ```typescript
- * const tx = new Transaction();
- * tx.moveCall({
- *   target: `${PACKAGE_ID}::router::remove_liquidity`,
- *   arguments: [
- *     tx.object(positionId),
- *     tx.pure.u64(lpTokenAmount),
- *     tx.pure.u64(minTokenAAmount),
- *     tx.pure.u64(minTokenBAmount),
- *   ],
- * });
- * const result = await signAndExecuteTransaction({ transaction: tx });
- * ```
+ * Build an add liquidity transaction
+ * Calls: liquidity::add_liquidity<X, Y>(pool, coin_x, coin_y, ctx)
  */
-export const removeLiquidity = async (_params: RemoveLiquidityParams): Promise<TransactionResult> => {
-  // TODO: Implement actual contract call
-  console.log('Remove liquidity called with params:', _params);
-  throw new Error('Remove liquidity not implemented - connect to your smart contract');
+export const buildAddLiquidityTransaction = (
+  params: AddLiquidityParams,
+  coinXObjectId: string,
+  coinYObjectId: string
+): Transaction => {
+  const tx = new Transaction();
+
+  tx.moveCall({
+    target: `${DEX_PACKAGE_ID}::liquidity::add_liquidity`,
+    typeArguments: [params.pool.tokenA.address, params.pool.tokenB.address],
+    arguments: [
+      tx.object(params.pool.id),
+      tx.object(coinXObjectId),
+      tx.object(coinYObjectId),
+    ],
+  });
+
+  return tx;
 };
 
 /**
- * Get a quote for a swap
- * TODO: Implement actual quote calculation from pool reserves
+ * Build a remove liquidity transaction
+ * Calls: liquidity::remove_liquidity<X, Y>(pool, lp_coin, ctx)
+ */
+export const buildRemoveLiquidityTransaction = (
+  params: RemoveLiquidityParams,
+  lpCoinObjectId: string
+): Transaction => {
+  const tx = new Transaction();
+
+  tx.moveCall({
+    target: `${DEX_PACKAGE_ID}::liquidity::remove_liquidity`,
+    typeArguments: [params.position.pool.tokenA.address, params.position.pool.tokenB.address],
+    arguments: [
+      tx.object(params.position.pool.id),
+      tx.object(lpCoinObjectId),
+    ],
+  });
+
+  return tx;
+};
+
+/**
+ * Build a create pool transaction
+ * Calls: pool::create_pool_and_share<X, Y>(ctx)
+ */
+export const buildCreatePoolTransaction = (
+  tokenA: Token,
+  tokenB: Token
+): Transaction => {
+  const tx = new Transaction();
+
+  tx.moveCall({
+    target: `${DEX_PACKAGE_ID}::pool::create_pool_and_share`,
+    typeArguments: [tokenA.address, tokenB.address],
+    arguments: [],
+  });
+
+  return tx;
+};
+
+/**
+ * Calculate swap output using constant product formula
+ * output = (input * (10000 - fee) * reserve_out) / (reserve_in * 10000 + input * (10000 - fee))
+ */
+export const calculateSwapOutput = (
+  amountIn: number,
+  reserveIn: number,
+  reserveOut: number,
+  feeBps: number = DEFAULT_FEE_BPS
+): number => {
+  if (amountIn <= 0 || reserveIn <= 0 || reserveOut <= 0) {
+    return 0;
+  }
+
+  const amountInWithFee = amountIn * (FEE_DENOMINATOR - feeBps);
+  const numerator = amountInWithFee * reserveOut;
+  const denominator = reserveIn * FEE_DENOMINATOR + amountInWithFee;
+
+  return Math.floor(numerator / denominator);
+};
+
+/**
+ * Calculate price impact percentage
+ */
+export const calculatePriceImpact = (
+  amountIn: number,
+  amountOut: number,
+  reserveIn: number,
+  reserveOut: number
+): number => {
+  if (reserveIn <= 0 || reserveOut <= 0) {
+    return 0;
+  }
+
+  const spotPrice = reserveOut / reserveIn;
+  const executionPrice = amountOut / amountIn;
+  const impact = ((spotPrice - executionPrice) / spotPrice) * 100;
+
+  return Math.max(0, impact);
+};
+
+/**
+ * Get a quote for a swap (client-side calculation)
  */
 export const getSwapQuote = async (
   inputToken: Token,
   outputToken: Token,
   inputAmount: string,
-  _pool: Pool
+  pool: Pool
 ): Promise<SwapQuote> => {
-  // TODO: Implement actual quote calculation
-  // This is a mock implementation using constant product formula
-  const mockOutputAmount = (parseFloat(inputAmount) * 0.997).toString();
+  const inputDecimals = inputToken.decimals;
+  const outputDecimals = outputToken.decimals;
+
+  const amountInRaw = parseFloat(inputAmount) * Math.pow(10, inputDecimals);
+
+  // Determine which reserves to use based on swap direction
+  const isXToY = pool.tokenA.address === inputToken.address;
+  const reserveIn = parseFloat(isXToY ? pool.reserveA : pool.reserveB);
+  const reserveOut = parseFloat(isXToY ? pool.reserveB : pool.reserveA);
+
+  const amountOutRaw = calculateSwapOutput(amountInRaw, reserveIn, reserveOut);
+  const amountOut = amountOutRaw / Math.pow(10, outputDecimals);
+
+  const priceImpact = calculatePriceImpact(amountInRaw, amountOutRaw, reserveIn, reserveOut);
+
+  const feeAmount = parseFloat(inputAmount) * (DEFAULT_FEE_BPS / FEE_DENOMINATOR);
 
   return {
     inputToken,
     outputToken,
     inputAmount,
-    outputAmount: mockOutputAmount,
-    priceImpact: 0.1,
-    fee: (parseFloat(inputAmount) * 0.003).toString(),
+    outputAmount: amountOut.toFixed(outputDecimals),
+    priceImpact,
+    fee: feeAmount.toFixed(inputDecimals),
     route: [inputToken.symbol, outputToken.symbol],
   };
 };
 
 /**
- * Fetch pool data from chain
- * TODO: Implement actual pool data fetching
+ * Calculate LP tokens to receive when adding liquidity
  */
-export const fetchPoolData = async (_poolId: string): Promise<Pool | null> => {
-  // TODO: Implement actual pool data fetching
-  console.log('Fetch pool data called for:', _poolId);
-  return null;
+export const calculateLpTokens = (
+  amountA: number,
+  amountB: number,
+  reserveA: number,
+  reserveB: number,
+  totalSupply: number
+): number => {
+  if (totalSupply === 0) {
+    // Initial liquidity: sqrt(amountA * amountB) - MINIMUM_LIQUIDITY
+    const MINIMUM_LIQUIDITY = 1000;
+    return Math.floor(Math.sqrt(amountA * amountB)) - MINIMUM_LIQUIDITY;
+  }
+
+  // Subsequent liquidity: min(amountA/reserveA, amountB/reserveB) * totalSupply
+  const ratioA = (amountA * totalSupply) / reserveA;
+  const ratioB = (amountB * totalSupply) / reserveB;
+
+  return Math.floor(Math.min(ratioA, ratioB));
 };
 
 /**
- * Fetch user positions
- * TODO: Implement actual position fetching
+ * Calculate token amounts when removing liquidity
  */
-export const fetchUserPositions = async (_walletAddress: string): Promise<[]> => {
-  // TODO: Implement actual position fetching
-  console.log('Fetch positions called for:', _walletAddress);
-  return [];
-};
+export const calculateRemoveLiquidity = (
+  lpAmount: number,
+  totalSupply: number,
+  reserveA: number,
+  reserveB: number
+): { amountA: number; amountB: number } => {
+  const share = lpAmount / totalSupply;
 
-/**
- * Request tokens from faucet
- * TODO: Implement actual faucet contract call using Sui SDK
- *
- * Example implementation:
- * ```typescript
- * const tx = new Transaction();
- * tx.moveCall({
- *   target: `${FAUCET_PACKAGE_ID}::faucet::mint`,
- *   arguments: [
- *     tx.object(faucetObjectId),
- *     tx.pure.address(recipient),
- *   ],
- *   typeArguments: [token.address],
- * });
- * const result = await signAndExecuteTransaction({ transaction: tx });
- * ```
- */
-export const requestFaucet = async (params: FaucetParams): Promise<TransactionResult> => {
-  // TODO: Implement actual faucet contract call
-  console.log('Faucet requested for:', params.token.symbol, 'to:', params.recipient);
-
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 1500));
-
-  // For development, return success (mock implementation)
   return {
-    success: true,
-    digest: `0x${Math.random().toString(16).slice(2)}${Math.random().toString(16).slice(2)}`,
+    amountA: Math.floor(reserveA * share),
+    amountB: Math.floor(reserveB * share),
   };
 };

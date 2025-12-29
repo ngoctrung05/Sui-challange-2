@@ -1,34 +1,60 @@
 import { useState } from 'react';
-import { useCurrentAccount } from '@mysten/dapp-kit';
+import { useCurrentAccount, useSignAndExecuteTransaction } from '@mysten/dapp-kit';
 import type { Token } from '../../types';
 import { Card, Button } from '../common';
 import { FAUCET_TOKENS } from '../../constants';
-import { requestFaucet } from '../../services/contract';
+import { buildFaucetTransaction } from '../../services/contract';
+import { useToast } from '../../contexts/ToastContext';
 
 export default function FaucetCard() {
   const account = useCurrentAccount();
+  const { mutateAsync: signAndExecute } = useSignAndExecuteTransaction();
+  const { showTxSuccess, showError } = useToast();
   const [loadingToken, setLoadingToken] = useState<string | null>(null);
   const [successToken, setSuccessToken] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const handleFaucetRequest = async (token: Token) => {
     if (!account) return;
 
     setLoadingToken(token.symbol);
     setSuccessToken(null);
+    setError(null);
 
     try {
-      const result = await requestFaucet({
+      const tx = buildFaucetTransaction({
         token,
         recipient: account.address,
       });
 
-      if (result.success) {
-        setSuccessToken(token.symbol);
-        setTimeout(() => setSuccessToken(null), 3000);
+      const result = await signAndExecute({
+        transaction: tx,
+      });
+
+      console.log('Faucet transaction result:', result);
+      setSuccessToken(token.symbol);
+      setTimeout(() => setSuccessToken(null), 5000);
+
+      // Show toast with SuiVision link
+      showTxSuccess(
+        `${token.symbol} Received`,
+        result.digest,
+        `Successfully received ${token.faucetAmount} ${token.symbol} tokens`
+      );
+    } catch (err) {
+      console.error('Faucet request failed:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+
+      // Check for cooldown error
+      if (errorMessage.includes('200') || errorMessage.includes('cooldown')) {
+        const cooldownMsg = `Please wait before requesting ${token.symbol} again (1 hour cooldown)`;
+        setError(cooldownMsg);
+        showError('Cooldown Active', cooldownMsg);
+      } else {
+        setError(`Failed to request ${token.symbol}: ${errorMessage}`);
+        showError('Faucet Request Failed', errorMessage);
       }
-    } catch (error) {
-      console.error('Faucet request failed:', error);
-      alert(`Failed to request ${token.symbol}. Please try again.`);
+      setTimeout(() => setError(null), 5000);
     } finally {
       setLoadingToken(null);
     }
@@ -74,6 +100,12 @@ export default function FaucetCard() {
           <p className="text-sm text-[#a0a0a0]">Get test tokens for development</p>
         </div>
       </div>
+
+      {error && (
+        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-xl">
+          <p className="text-sm text-red-400">{error}</p>
+        </div>
+      )}
 
       <div className="space-y-3">
         {FAUCET_TOKENS.map((token) => (
@@ -123,6 +155,8 @@ export default function FaucetCard() {
       <div className="mt-4 p-3 bg-[#242424] rounded-xl">
         <p className="text-xs text-[#a0a0a0] text-center">
           Testnet faucet tokens are for development purposes only and have no real value.
+          <br />
+          <span className="text-[#666666]">Cooldown: 1 hour between requests per token</span>
         </p>
       </div>
     </Card>
