@@ -1,6 +1,7 @@
-import { useQuery } from '@tanstack/react-query';
-import type { Token, SwapQuote } from '../types';
-import { getPoolByTokens } from '../constants';
+import { useQuery } from "@tanstack/react-query";
+import type { Token, SwapQuote } from "../types";
+import { getPoolByTokens } from "../constants";
+import { getSwapQuote } from "@/services/contract";
 
 const SWAP_FEE = 0.003; // 0.3%
 
@@ -27,10 +28,10 @@ function calculateOutputAmount(
 ): string {
   // TODO: Implement constant product AMM formula
   // Hint: dy = y * dx * (1 - fee) / (x + dx * (1 - fee))
-  console.log('TODO: Implement calculateOutputAmount');
-  console.log('Input:', inputAmount, 'ReserveIn:', reserveIn, 'ReserveOut:', reserveOut);
-  console.log('Fee:', SWAP_FEE);
-  return '0';
+  return (
+    (parseFloat(reserveOut) * parseFloat(inputAmount) * (1 - SWAP_FEE)) /
+    (parseFloat(reserveIn) + parseFloat(inputAmount) * (1 - SWAP_FEE))
+  ).toString();
 }
 
 function calculatePriceImpact(
@@ -41,10 +42,13 @@ function calculatePriceImpact(
 ): number {
   // TODO: Implement price impact calculation
   // Hint: Compare spot price (reserveOut/reserveIn) with actual price (outputAmount/inputAmount)
-  console.log('TODO: Implement calculatePriceImpact');
-  console.log('Input:', inputAmount, 'Output:', outputAmount);
-  console.log('ReserveIn:', reserveIn, 'ReserveOut:', reserveOut);
-  return 0;
+  return Math.max(
+    0,
+    ((parseFloat(reserveOut) / parseFloat(reserveIn) -
+      parseFloat(outputAmount) / parseFloat(inputAmount)) /
+      (parseFloat(reserveOut) / parseFloat(reserveIn))) *
+      100
+  );
 }
 
 /*
@@ -111,9 +115,19 @@ export function useSwapQuote(
   inputAmount?: string
 ) {
   return useQuery({
-    queryKey: ['swapQuote', inputToken?.address, outputToken?.address, inputAmount],
+    queryKey: [
+      "swapQuote",
+      inputToken?.address,
+      outputToken?.address,
+      inputAmount,
+    ],
     queryFn: async (): Promise<SwapQuote | null> => {
-      if (!inputToken || !outputToken || !inputAmount || parseFloat(inputAmount) <= 0) {
+      if (
+        !inputToken ||
+        !outputToken ||
+        !inputAmount ||
+        parseFloat(inputAmount) <= 0
+      ) {
         return null;
       }
 
@@ -125,22 +139,49 @@ export function useSwapQuote(
 
       const pool = getPoolByTokens(inputToken.address, outputToken.address);
       if (!pool) {
-        console.log('No pool found for', inputToken.symbol, '/', outputToken.symbol);
+        console.log(
+          "No pool found for",
+          inputToken.symbol,
+          "/",
+          outputToken.symbol
+        );
         return null;
       }
 
       // Placeholder: call the helper functions so workshop attendees know they exist
-      const outputAmount = calculateOutputAmount('0', '0', '0');
-      const priceImpact = calculatePriceImpact('0', '0', '0', '0');
+      const outputAmount = calculateOutputAmount(
+        inputAmount,
+        pool.reserveA,
+        pool.reserveB
+      );
 
-      console.log('TODO: Implement useSwapQuote properly');
-      console.log('Pool found:', pool);
-      console.log('Placeholder output:', outputAmount, 'impact:', priceImpact);
+      const priceImpact = calculatePriceImpact(
+        inputAmount,
+        outputAmount,
+        pool.reserveA,
+        pool.reserveB
+      );
+
+      // console.log("TODO: Implement useSwapQuote properly");
+      // console.log("Pool found:", pool);
+      // console.log("Placeholder output:", outputAmount, "impact:", priceImpact);
 
       // Return null until implemented
-      return null;
+      return {
+        inputToken,
+        outputToken,
+        inputAmount,
+        outputAmount,
+        priceImpact,
+        fee: (parseFloat(inputAmount) * SWAP_FEE).toString(),
+        route: [inputToken.symbol, outputToken.symbol],
+      };
     },
-    enabled: !!inputToken && !!outputToken && !!inputAmount && parseFloat(inputAmount) > 0,
+    enabled:
+      !!inputToken &&
+      !!outputToken &&
+      !!inputAmount &&
+      parseFloat(inputAmount) > 0,
     refetchInterval: 5000,
     staleTime: 2000,
   });
@@ -215,14 +256,33 @@ export function useSwapQuote(
  */
 export function useSwapRate(tokenA?: Token, tokenB?: Token) {
   return useQuery({
-    queryKey: ['swapRate', tokenA?.address, tokenB?.address],
+    queryKey: ["swapRate", tokenA?.address, tokenB?.address],
     queryFn: async () => {
       if (!tokenA || !tokenB) return null;
 
       // TODO: Implement swap rate calculation
-      console.log('TODO: Implement useSwapRate');
-      console.log('Token A:', tokenA.symbol);
-      console.log('Token B:', tokenB.symbol);
+      console.log("TODO: Implement useSwapRate");
+      console.log("Token A:", tokenA.symbol);
+      console.log("Token B:", tokenB.symbol);
+
+      let pool = getPoolByTokens(tokenA.address, tokenB.address);
+
+      let amountA = Number(
+        tokenA.symbol === pool?.tokenA.symbol ? pool?.reserveA : pool?.reserveB
+      );
+      let amountB = Number(
+        tokenB.symbol === pool?.tokenB.symbol ? pool?.reserveB : pool?.reserveA
+      );
+
+      if (pool) {
+        const decimalDiff = tokenB.decimals - tokenA.decimals;
+        const rate = (amountB / amountA) * Math.pow(10, decimalDiff);
+
+        return {
+          rate,
+          formatted: `1 ${tokenA.symbol} = ${rate.toFixed(4)} ${tokenB.symbol}`,
+        };
+      }
 
       return null;
     },
